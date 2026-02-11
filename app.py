@@ -4,18 +4,22 @@ import numpy as np
 import plotly.graph_objects as go
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
-from dotenv import load_dotenv
 import os
 import time
 from datetime import datetime
 
-# 1. GÜVENLİK VE AYARLAR
-load_dotenv()
-API_KEY = os.getenv('BINANCE_API_KEY')
-API_SECRET = os.getenv('BINANCE_SECRET_KEY')
+# 1. GÜVENLİK (STREAMLIT SECRETS)
+# Not: Bulutta çalışırken .env yerine st.secrets kullanılır.
+try:
+    API_KEY = st.secrets["BINANCE_API_KEY"]
+    API_SECRET = st.secrets["BINANCE_SECRET_KEY"]
+except Exception:
+    st.error("⚠️ API Anahtarları Streamlit Secrets kısmında bulunamadı!")
+    API_KEY = None
+    API_SECRET = None
 
 # SAYFA AYARLARI
-st.set_page_config(page_title="NEON RED | Binance TR Terminal", layout="wide")
+st.set_page_config(page_title="NEON RED | Cloud Terminal", layout="wide")
 
 # --- MODERN ARAYÜZ (CSS) ---
 st.markdown("""
@@ -34,35 +38,36 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 2. BINANCE TR BAĞLANTI SİSTEMİ (Hata Vermeyen Güvenli Mod)
-def get_safe_client():
-    try:
-        # Proxy engellerini kaldır
-        os.environ['no_proxy'] = '*'
-        
-        # Client oluştur
-        c = Client(API_KEY, API_SECRET)
-        
-        # Hosts dosyasına yazdığınız adrese zorla
-        c.API_URL = 'https://api.trbinance.com/api'
-        
-        # Bağlantıyı test et
-        c.get_server_time(timeout=10)
-        return c
-    except Exception as e:
+# 2. BINANCE TR BULUT BAĞLANTI SİSTEMİ
+def get_cloud_client():
+    if not API_KEY or not API_SECRET:
         return None
+    
+    # Denenecek farklı endpointler (Bulut sunucusu için alternatifler)
+    urls = [
+        'https://api.trbinance.com/api',
+        'https://www.trbinance.com/api'
+    ]
+    
+    for url in urls:
+        try:
+            c = Client(API_KEY, API_SECRET)
+            c.API_URL = url
+            c.get_server_time(timeout=10)
+            return c
+        except Exception:
+            continue
+    return None
 
-# Bağlantıyı tek bir değişkende tut (Hata almamak için)
-client = get_safe_client()
+# Bağlantıyı oluştur
+client = get_cloud_client()
 
-# 3. TEKNİK ANALİZ FONKSİYONLARI
+# 3. TEKNİK ANALİZ
 def get_indicators(df):
-    # RSI
     delta = df['close'].diff()
     up = delta.clip(lower=0); down = -1 * delta.clip(upper=0)
     ema_up = up.ewm(com=13, adjust=False).mean(); ema_down = down.ewm(com=13, adjust=False).mean()
     df['RSI'] = 100 - (100 / (1 + (ema_up / ema_down)))
-    # Bollinger Bantları
     df['MA20'] = df['close'].rolling(window=20).mean()
     df['STD'] = df['close'].rolling(window=20).std()
     df['Upper'] = df['MA20'] + (df['STD'] * 2)
@@ -81,13 +86,13 @@ def get_data(symbol):
     except: return None
 
 # 4. YAN PANEL
-st.sidebar.markdown("<h1 style='color: #ff0000; text-align:center;'>NEON RED TR</h1>", unsafe_allow_html=True)
+st.sidebar.markdown("<h1 style='color: #ff0000; text-align:center;'>NEON RED CLOUD</h1>", unsafe_allow_html=True)
 
 if client:
-    st.sidebar.success("✅ Binance TR Bağlantısı Başarılı")
+    st.sidebar.success("✅ Bulut Bağlantısı Başarılı")
 else:
-    st.sidebar.error("❌ Sunucuya Bağlanılamadı!")
-    st.sidebar.warning("İpucu: hosts dosyasını yönetici olarak değiştirdiğinizden emin olun.")
+    st.sidebar.error("❌ Binance TR Erişilemiyor!")
+    st.sidebar.info("Binance TR panelininden IP kısıtlamasını 'Unrestricted' yaptığınızdan emin olun.")
 
 coin = st.sidebar.selectbox("Varlık Seçimi", ["BTCTRY", "ETHTRY", "SOLTRY", "BNBTRY"], index=0)
 try_butce = st.sidebar.number_input("İşlem Başına Bütçe (TRY)", value=250.0, min_value=100.0)
@@ -95,14 +100,14 @@ mod = st.sidebar.radio("Çalışma Modu", ["📊 SİMÜLASYON", "💸 GERÇEK İ
 aktif = st.sidebar.toggle("SİSTEMİ DEVREYE AL")
 
 # 5. ANA PANEL
-st.title(f"⚡ {coin} TERMİNALİ")
+st.title(f"⚡ {coin} TERMİNALİ (7/24)")
 c1, c2, c3, c4 = st.columns(4)
 
 if 'gecmis' not in st.session_state: st.session_state.gecmis = []
 
 if aktif:
     if client is None:
-        st.error("Bağlantı yok. Lütfen ayarları kontrol edin.")
+        st.error("Binance bağlantısı kurulamadı. Secrets veya IP ayarlarını kontrol edin.")
     else:
         df = get_data(coin)
         if df is not None and not df.empty:
@@ -120,7 +125,6 @@ if aktif:
                 c4.metric("TRY BAKİYE", f"₺{float(bakiye):,.2f}")
             except: c4.metric("BAKİYE", "Okunamadı")
 
-            # GRAFİK
             fig = go.Figure()
             fig.add_trace(go.Candlestick(x=df['time'], open=df['open'], high=df['high'], low=df['low'], close=df['close'], name='Fiyat'))
             fig.add_trace(go.Scatter(x=df['time'], y=df['Upper'], line=dict(color='rgba(255,0,0,0.2)'), name='Üst Bant'))
@@ -128,7 +132,7 @@ if aktif:
             fig.update_layout(template="plotly_dark", height=450, margin=dict(l=0,r=0,b=0,t=0), paper_bgcolor="black", plot_bgcolor="black")
             st.plotly_chart(fig, use_container_width=True)
 
-            # KARAR VE LOGLAR
+            # Karar mekanizması aynı kalıyor...
             karar = "BEKLE"
             if son_rsi < 32 and son_fiyat < alt_bant: karar = "AL"
             elif son_rsi > 68 or son_fiyat > ust_bant: karar = "SAT"
@@ -136,31 +140,30 @@ if aktif:
             zaman = datetime.now().strftime("%H:%M:%S")
             if karar == "AL":
                 miktar = round(try_butce / son_fiyat, 6)
-                msg = f"🟢 [{zaman}] ALIM SİNYALİ: {son_fiyat} TL | Adet: {miktar}"
+                msg = f"🟢 [{zaman}] AL: {son_fiyat} TL | Adet: {miktar}"
                 if mod == "💸 GERÇEK İŞLEM":
                     try:
                         client.order_market_buy(symbol=coin, quantity=miktar)
-                        msg += " | ✅ EMİR TAMAM"
+                        msg += " | ✅ TAMAM"
                     except Exception as e: msg += f" | ❌ HATA: {e}"
                 st.session_state.gecmis.append(msg)
             elif karar == "SAT":
-                # Satış mantığı (Eldeki tüm bakiyeyi sat)
                 try:
                     asset = coin.replace("TRY", "")
                     eldeki = float(client.get_asset_balance(asset=asset)['free'])
-                    if eldeki > 0:
-                        msg = f"🔴 [{zaman}] SATIŞ SİNYALİ: {son_fiyat} TL | Adet: {eldeki}"
-                        if mod == "💸 GERÇEK İŞLEM" and (eldeki * son_fiyat) > 100:
+                    if eldeki > 0 and (eldeki * son_fiyat) > 100:
+                        msg = f"🔴 [{zaman}] SAT: {son_fiyat} TL | Adet: {eldeki}"
+                        if mod == "💸 GERÇEK İŞLEM":
                             client.order_market_sell(symbol=coin, quantity=eldeki)
-                            msg += " | ✅ SATILDI"
+                            msg += " | ✅ TAMAM"
                         st.session_state.gecmis.append(msg)
                 except: pass
 
             st.code("\n".join(st.session_state.gecmis[-10:]))
         else:
-            st.warning("Veri bekleniyor... Bağlantı sorunu olabilir.")
+            st.warning("Veri bekleniyor... Binance TR yurt dışı sunucularını engelliyor olabilir.")
             
-    time.sleep(10)
+    time.sleep(15) # Bulut için süreyi biraz artırmak daha stabil olur
     st.rerun()
 else:
-    st.info("Sistem standby modunda. Başlatmak için 'Sistemi Devreye Al' butonuna basın.")
+    st.info("Sistem standby modunda.")
