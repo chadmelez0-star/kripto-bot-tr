@@ -7,7 +7,7 @@ from datetime import datetime
 import time
 
 # 1. SAYFA YAPILANDIRMASI
-st.set_page_config(page_title="NEON RED | Trading Terminal", layout="wide")
+st.set_page_config(page_title="NEON RED | Global Terminal", layout="wide")
 
 # --- PROFESYONEL TEMA (CSS) ---
 st.markdown("""
@@ -21,24 +21,24 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 2. SECRETS VE BAĞLANTI
-# Streamlit Secrets'tan anahtarları çekiyoruz
+# 2. SECRETS VE GLOBAL BAĞLANTI
+# Not: Binance Global anahtarlarını Streamlit Secrets kısmına yazmalısın.
 API_KEY = st.secrets.get("BINANCE_API_KEY")
 API_SECRET = st.secrets.get("BINANCE_SECRET_KEY")
 
 @st.cache_resource
-def get_binance_client():
+def get_global_client():
     if not API_KEY or not API_SECRET:
         return None
     try:
+        # Global bağlantıda ekstra API_URL tanımlamaya gerek yoktur, varsayılanı kullanır.
         c = Client(API_KEY, API_SECRET)
-        c.API_URL = 'https://api.trbinance.com/api'
-        c.get_server_time()
+        c.get_server_time() # Bağlantı testi
         return c
     except:
         return None
 
-client = get_binance_client()
+client = get_global_client()
 
 # 3. TEKNİK ANALİZ MOTORU
 def calculate_indicators(df):
@@ -66,28 +66,28 @@ def fetch_data(symbol):
         return None
 
 # 4. YAN PANEL
-st.sidebar.markdown("<h1 style='color: #ff0000;'>NEON RED TR</h1>", unsafe_allow_html=True)
+st.sidebar.markdown("<h1 style='color: #ff0000; text-align:center;'>NEON RED GLOBAL</h1>", unsafe_allow_html=True)
 
 if client:
-    st.sidebar.success("✅ API BAĞLANTISI AKTİF")
+    st.sidebar.success("✅ GLOBAL API AKTİF")
 else:
-    st.sidebar.error("❌ API ANAHTARLARI OKUNAMADI")
-    st.sidebar.info("Secrets kısmına BINANCE_API_KEY ve BINANCE_SECRET_KEY yazdığınızdan emin olun.")
+    st.sidebar.error("❌ API ANAHTARLARI EKSİK")
+    st.sidebar.info("Lütfen Streamlit panelinden Secrets ayarlarını yapın.")
 
-coin = st.sidebar.selectbox("Varlık Seçimi", ["BTCTRY", "ETHTRY", "SOLTRY", "BNBTRY"], index=0)
-try_butce = st.sidebar.number_input("İşlem Bütçesi (TRY)", value=250.0, min_value=100.0)
-mod = st.sidebar.radio("Çalışma Modu", ["SİMÜLASYON", "GERÇEK İŞLEM"])
+coin = st.sidebar.selectbox("İşlem Çifti", ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "AVAXUSDT"], index=0)
+usdt_butce = st.sidebar.number_input("İşlem Bütçesi (USDT)", value=20.0, min_value=11.0, step=1.0)
+mod = st.sidebar.radio("Çalışma Modu", ["📊 SİMÜLASYON", "💸 GERÇEK İŞLEM"])
 aktif = st.sidebar.toggle("SİSTEMİ DEVREYE AL")
 
 # 5. ANA PANEL
-st.title(f"⚡ {coin} SAVAŞ TERMİNALİ")
+st.title(f"⚡ {coin} GLOBAL TERMİNAL")
 c1, c2, c3, c4 = st.columns(4)
 
 if 'gecmis' not in st.session_state: st.session_state.gecmis = []
 
 if aktif:
     if not client:
-        st.error("API Bağlantısı olmadan sistem çalışamaz.")
+        st.error("Bağlantı kurulamadı. Lütfen anahtarları kontrol edin.")
     else:
         df = fetch_data(coin)
         if df is not None:
@@ -97,15 +97,15 @@ if aktif:
             ust_bant = df['Upper'].iloc[-1]
 
             # Metrikler
-            c1.metric("GÜNCEL FİYAT", f"₺{son_fiyat:,.2f}")
+            c1.metric("GÜNCEL FİYAT", f"${son_fiyat:,.2f}")
             c2.metric("RSI (14)", f"{son_rsi:.1f}")
-            c3.metric("ALT BANT", f"{alt_bant:,.0f}")
+            c3.metric("BANT DURUMU", "DİP" if son_fiyat < alt_bant else "ZİRVE" if son_fiyat > ust_bant else "NORMAL")
             
             try:
-                bakiye = client.get_asset_balance(asset='TRY')['free']
-                c4.metric("TRY BAKİYE", f"₺{float(bakiye):,.2f}")
+                bakiye = client.get_asset_balance(asset='USDT')['free']
+                c4.metric("USDT BAKİYE", f"${float(bakiye):,.2f}")
             except:
-                c4.metric("BAKİYE", "Veri Yok")
+                c4.metric("BAKİYE", "Okunamadı")
 
             # GRAFİK
             fig = go.Figure()
@@ -115,37 +115,38 @@ if aktif:
             fig.update_layout(template="plotly_dark", height=450, margin=dict(l=0,r=0,b=0,t=0), paper_bgcolor="black", plot_bgcolor="black")
             st.plotly_chart(fig, use_container_width=True)
 
-            # STRATEJİ KARARI
+            # KARAR MEKANİZMASI
             karar = "BEKLE"
             if son_rsi < 32 and son_fiyat < alt_bant: karar = "AL"
             elif son_rsi > 68 or son_fiyat > ust_bant: karar = "SAT"
 
             zaman = datetime.now().strftime("%H:%M:%S")
             if karar == "AL":
-                miktar = round(try_butce / son_fiyat, 6)
-                msg = f"🟢 [{zaman}] ALIM SİNYALİ: {son_fiyat} TL | Adet: {miktar}"
-                if mod == "GERÇEK İŞLEM":
+                miktar = round(usdt_butce / son_fiyat, 5) # Adet hassasiyeti
+                msg = f"🟢 [{zaman}] ALIM SİNYALİ: {son_fiyat} $ | Adet: {miktar}"
+                if mod == "💸 GERÇEK İŞLEM":
                     try:
                         client.order_market_buy(symbol=coin, quantity=miktar)
                         msg += " | ✅ EMİR TAMAM"
                     except Exception as e: msg += f" | ❌ HATA: {e}"
                 st.session_state.gecmis.append(msg)
+                
             elif karar == "SAT":
                 try:
-                    asset = coin.replace("TRY", "")
+                    asset = coin.replace("USDT", "")
                     eldeki = float(client.get_asset_balance(asset=asset)['free'])
-                    if eldeki > 0 and (eldeki * son_fiyat) > 100:
-                        msg = f"🔴 [{zaman}] SATIŞ SİNYALİ: {son_fiyat} TL"
-                        if mod == "GERÇEK İŞLEM":
+                    if eldeki > 0 and (eldeki * son_fiyat) > 10: # Min 10 USDT kuralı
+                        msg = f"🔴 [{zaman}] SATIŞ SİNYALİ: {son_fiyat} $"
+                        if mod == "💸 GERÇEK İŞLEM":
                             client.order_market_sell(symbol=coin, quantity=eldeki)
                             msg += " | ✅ SATILDI"
                         st.session_state.gecmis.append(msg)
                 except: pass
 
-            st.markdown("### 📋 SİSTEM GÜNLÜĞÜ")
+            st.markdown("### 📋 İŞLEM GÜNLÜĞÜ")
             st.code("\n".join(st.session_state.gecmis[-8:]))
         else:
-            st.warning("⚠️ Veri çekilemiyor. Binance TR bu sunucu lokasyonunu (US/EU) engelliyor olabilir.")
+            st.warning("⚠️ Veri çekilemiyor. Binance Global bağlantısını kontrol edin.")
             
     time.sleep(15)
     st.rerun()
